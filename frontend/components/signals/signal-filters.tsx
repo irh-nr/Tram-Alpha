@@ -50,7 +50,7 @@ export function SignalFilters({
       {/* Status Filter */}
       <Select
         value={activeStatus || "all"}
-        onValueChange={(v) => onStatusChange(v === "all" ? undefined : v)}
+        onValueChange={(v) => onStatusChange(!v || v === "all" ? undefined : v)}
       >
         <SelectTrigger className="w-[140px] bg-muted/30 border-border/50">
           <SlidersHorizontal className="h-3.5 w-3.5 mr-2 text-muted-foreground" />
@@ -70,7 +70,7 @@ export function SignalFilters({
         <Select
           value={activeStrategy || "all"}
           onValueChange={(v) =>
-            onStrategyChange(v === "all" ? undefined : v)
+            onStrategyChange(!v || v === "all" ? undefined : v)
           }
         >
           <SelectTrigger className="w-[170px] bg-muted/30 border-border/50">

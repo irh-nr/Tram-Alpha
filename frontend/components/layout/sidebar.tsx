@@ -105,7 +105,7 @@ export function Sidebar() {
 
           if (!sidebarOpen) {
             return (
-              <Tooltip key={item.href} delayDuration={0}>
+              <Tooltip key={item.href}>
                 <TooltipTrigger asChild>{linkContent}</TooltipTrigger>
                 <TooltipContent side="right" className="font-medium">
                   {item.label}

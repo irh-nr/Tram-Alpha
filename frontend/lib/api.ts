@@ -86,7 +86,7 @@ class ApiClient {
 
     // Return parsed JSON if available, otherwise undefined
     const text = await res.text();
-    return text ? JSON.parse(text) : undefined;
+    return text ? JSON.parse(text) : (undefined as unknown as T);
   }
 }
 

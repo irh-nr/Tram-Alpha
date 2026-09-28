@@ -526,7 +526,7 @@ export default function SettingsPage() {
           <div className="flex items-center gap-3">
             <div className="space-y-1.5 flex-1">
               <Label htmlFor="retention-days">Retention Period</Label>
-              <Select value={retentionDays} onValueChange={setRetentionDays}>
+              <Select value={retentionDays} onValueChange={(val) => val && setRetentionDays(val)}>
                 <SelectTrigger className="bg-accent/30 border-border/50">
                   <SelectValue />
                 </SelectTrigger>
