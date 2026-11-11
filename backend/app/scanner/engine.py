@@ -15,6 +15,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
+from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.db.client import get_supabase_client
 from app.scanner.binance_ws import BinanceWSClient, Candle, fetch_historical_klines
@@ -24,21 +25,6 @@ from app.strategies.registry import StrategyRegistry, _STRATEGY_CLASSES
 from app.services.notification_service import get_notification_service
 
 logger = get_logger(__name__)
-
-# Default symbols to scan
-# DEFAULT_SYMBOLS = [
-    #"BTCUSDT",
-    #"ETHUSDT",
-    #"SOLUSDT",
-    #"BNBUSDT",
-    #"XRPUSDT",
-    #"ADAUSDT",
-    #"DOGEUSDT",
-    #"AVAXUSDT",
-    #"DOTUSDT",
-    #"MATICUSDT", # Default
-
-#]
 
 # Default symbols to scan (Curated for 1h/4h Trend Following)
 DEFAULT_SYMBOLS = [
@@ -73,7 +59,7 @@ DEFAULT_SYMBOLS = [
     "INJUSDT",
 ]
 
-DEFAULT_TIMEFRAMES = ["1h", "4h"]
+DEFAULT_TIMEFRAMES = ["1h", "4h", "1d"]
 
 # Minimum interval between signals for same symbol/strategy (prevent spam)
 SIGNAL_COOLDOWN = timedelta(hours=4)
@@ -111,8 +97,9 @@ class ScannerEngine:
         symbols: list[str] | None = None,
         timeframes: list[str] | None = None,
     ):
-        self.symbols = symbols or DEFAULT_SYMBOLS
-        self.timeframes = timeframes or DEFAULT_TIMEFRAMES
+        settings = get_settings()
+        self.symbols = symbols or settings.scanner_symbol_list or DEFAULT_SYMBOLS
+        self.timeframes = timeframes or settings.scanner_timeframe_list or DEFAULT_TIMEFRAMES
 
         self.buffer_manager = CandleBufferManager()
         self.registry = StrategyRegistry()
@@ -123,6 +110,7 @@ class ScannerEngine:
 
         self._ws_client: BinanceWSClient | None = None
         self._running = False
+        self._settings = settings
 
     async def initialize(self) -> None:
         """Initialize the scanner: discover strategies, load DB IDs, backfill buffers."""
@@ -530,4 +518,3 @@ class ScannerEngine:
             },
             "buffers": buffer_stats,
         }
-
