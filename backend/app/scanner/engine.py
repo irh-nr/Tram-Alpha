@@ -11,6 +11,7 @@ standalone worker process.
 """
 
 import asyncio
+import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
@@ -19,7 +20,7 @@ from app.db.client import get_supabase_client
 from app.scanner.binance_ws import BinanceWSClient, Candle, fetch_historical_klines
 from app.scanner.candle_buffer import CandleBufferManager
 from app.strategies.base import SignalProposal
-from app.strategies.registry import StrategyRegistry
+from app.strategies.registry import StrategyRegistry, _STRATEGY_CLASSES
 from app.services.notification_service import get_notification_service
 
 logger = get_logger(__name__)
@@ -150,8 +151,14 @@ class ScannerEngine:
                 db_strategies=list(strategy_db_map.keys()),
             )
         except Exception as e:
-            logger.error("scanner_strategy_load_error", error=str(e))
-            raise
+            logger.warning(
+                "scanner_strategy_load_fallback",
+                error=str(e),
+                hint="Supabase DB unreachable, initializing discovered strategies with fallback IDs",
+            )
+            fallback_map = {name: str(uuid.uuid4()) for name in _STRATEGY_CLASSES.keys()}
+            count = self.registry.initialize_from_classes(fallback_map)
+            logger.info("scanner_strategies_loaded_fallback", registered=count)
 
         # Backfill historical candles so buffers are immediately ready
         await self._backfill_buffers()
@@ -505,6 +512,8 @@ class ScannerEngine:
 
     def get_status(self) -> dict:
         """Get current scanner status for the API."""
+        buffer_stats = self.buffer_manager.get_buffer_stats()
+        total_buffered = sum(buffer_stats.values())
         return {
             "running": self._running,
             "connected": self._ws_client.is_connected if self._ws_client else False,
@@ -513,11 +522,12 @@ class ScannerEngine:
             "strategies": self.registry.count,
             "stats": {
                 "candles_processed": self.stats.candles_processed,
+                "buffered_candles": total_buffered,
                 "signals_generated": self.stats.signals_generated,
                 "signals_persisted": self.stats.signals_persisted,
                 "errors": self.stats.errors,
                 "uptime_seconds": round(self.stats.uptime_seconds, 1),
             },
-            "buffers": self.buffer_manager.get_buffer_stats(),
+            "buffers": buffer_stats,
         }
 

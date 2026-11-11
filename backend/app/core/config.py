@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # Binance
     binance_api_key: str = ""
     binance_api_secret: str = ""
+    binance_rest_base_url: str = "https://data-api.binance.vision/api/v3"
+    binance_ws_base_url: str = "wss://data-stream.binance.vision/stream"
+    binance_proxy_url: str = ""
 
     # Telegram
     telegram_bot_token: str = ""
