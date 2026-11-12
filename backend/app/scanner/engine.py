@@ -108,6 +108,11 @@ class ScannerEngine:
         # Cooldown tracking: (symbol, strategy_name) -> last_signal_time
         self._cooldowns: dict[tuple[str, str], datetime] = {}
 
+        # NEW: Deduplication set for WS candle messages.
+        # Prevents counting the same market candle multiple times when
+        # Binance streams per timeframe (e.g., 1h, 4h, 1d → ×3 multiplier).
+        self._processed_candles: set[tuple[str, str]] = set()
+
         self._ws_client: BinanceWSClient | None = None
         self._running = False
         self._settings = settings
@@ -215,6 +220,8 @@ class ScannerEngine:
         """
         self._running = True
         self.stats = ScannerStats()
+        # Reset dedup set on restart so counters refresh cleanly
+        self._processed_candles = set()
 
         logger.info(
             "scanner_starting",
@@ -261,6 +268,15 @@ class ScannerEngine:
         """
         if not candle.is_closed:
             return
+
+        # Deduplicate: skip if this (symbol, open_time) was already processed.
+        # Binance WS fans out one market candle across all requested timeframes
+        # (1h, 4h, 1d by default), so without this the candles_processed count
+        # would be ×3 (or ×N) the actual number of unique candles.
+        key = (candle.symbol, candle.open_time)
+        if key in self._processed_candles:
+            return
+        self._processed_candles.add(key)
 
         self.stats.candles_processed += 1
 
