@@ -88,7 +88,7 @@ export function ScannerStatusBar() {
             <div className="flex items-center gap-4 text-xs text-muted-foreground">
               <span className="flex items-center gap-1">
                 <BarChart3 className="h-3 w-3" />
-                {stats.candles_processed.toLocaleString()} candles
+                {stats.candles_processed.toLocaleString()} processed candles
               </span>
               <span className="flex items-center gap-1">
                 <Activity className="h-3 w-3 text-primary" />
