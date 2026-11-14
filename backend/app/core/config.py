@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     jwt_expiration_hours: int = 24
 
     # Scanner
-    scanner_symbols: str = "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,ADAUSDT,XRPUSDT,DOTUSDT,DOGEUSDT,AVAXUSDT,MATICUSDT"
+    
     scanner_timeframes: str = "1h,4h,1d"
 
     # Redis

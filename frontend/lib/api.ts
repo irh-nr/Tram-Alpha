@@ -1,5 +1,12 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+export class NetworkError extends Error {
+  constructor(message = "Network connection lost") {
+    super(message);
+    this.name = "NetworkError";
+  }
+}
+
 class ApiClient {
   private baseUrl: string;
 
@@ -8,7 +15,6 @@ class ApiClient {
   }
 
   private async getHeaders(): Promise<HeadersInit> {
-    // Import dynamically to avoid circular deps
     const { createClient } = await import("@/lib/supabase/client");
     const supabase = createClient();
     const {
@@ -23,6 +29,30 @@ class ApiClient {
     };
   }
 
+  private async request<T>(url: string, init?: RequestInit): Promise<T> {
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        ...init,
+        headers: await this.getHeaders(),
+      });
+    } catch (err) {
+      // fetch() hanya melempar TypeError saat koneksi jaringan/DNS terputus
+      if (err instanceof TypeError) {
+        throw new NetworkError(err.message);
+      }
+      throw err;
+    }
+
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(error.detail || "API request failed");
+    }
+
+    const text = await res.text();
+    return text ? JSON.parse(text) : (undefined as unknown as T);
+  }
+
   async get<T>(path: string, params?: Record<string, string>): Promise<T> {
     const url = new URL(`${this.baseUrl}${path}`);
     if (params) {
@@ -30,63 +60,27 @@ class ApiClient {
         if (value) url.searchParams.set(key, value);
       });
     }
-
-    const res = await fetch(url.toString(), {
-      headers: await this.getHeaders(),
-    });
-
-    if (!res.ok) {
-      const error = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(error.detail || "API request failed");
-    }
-
-    return res.json();
+    return this.request<T>(url.toString());
   }
 
   async post<T>(path: string, body?: unknown): Promise<T> {
-    const res = await fetch(`${this.baseUrl}${path}`, {
+    return this.request<T>(`${this.baseUrl}${path}`, {
       method: "POST",
-      headers: await this.getHeaders(),
       body: body ? JSON.stringify(body) : undefined,
     });
-
-    if (!res.ok) {
-      const error = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(error.detail || "API request failed");
-    }
-
-    return res.json();
   }
 
   async patch<T>(path: string, body: unknown): Promise<T> {
-    const res = await fetch(`${this.baseUrl}${path}`, {
+    return this.request<T>(`${this.baseUrl}${path}`, {
       method: "PATCH",
-      headers: await this.getHeaders(),
       body: JSON.stringify(body),
     });
-
-    if (!res.ok) {
-      const error = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(error.detail || "API request failed");
-    }
-
-    return res.json();
   }
 
   async delete<T = void>(path: string): Promise<T> {
-    const res = await fetch(`${this.baseUrl}${path}`, {
+    return this.request<T>(`${this.baseUrl}${path}`, {
       method: "DELETE",
-      headers: await this.getHeaders(),
     });
-
-    if (!res.ok) {
-      const error = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(error.detail || "API request failed");
-    }
-
-    // Return parsed JSON if available, otherwise undefined
-    const text = await res.text();
-    return text ? JSON.parse(text) : (undefined as unknown as T);
   }
 }
 

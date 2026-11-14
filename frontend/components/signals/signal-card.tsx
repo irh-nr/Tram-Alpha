@@ -126,7 +126,7 @@ export function SignalCard({ signal }: SignalCardProps) {
                   ? "secondary"
                   : "outline"
               }
-              className={`text-xs ${
+              className={`text-xs hidden ${
                 signal.status === "active"
                   ? "bg-primary/20 text-primary border-primary/30"
                   : signal.status === "triggered"

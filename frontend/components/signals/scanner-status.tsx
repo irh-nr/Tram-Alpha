@@ -6,6 +6,7 @@ import {
   Activity,
   Wifi,
   WifiOff,
+  RefreshCw,
   Zap,
   BarChart3,
   AlertCircle,
@@ -22,9 +23,11 @@ function formatUptime(seconds: number): string {
 }
 
 export function ScannerStatusBar() {
-  const { status, loading } = useScannerStatus(10000);
+  const { status, loading, error, uiState, reconnectAttempts } =
+    useScannerStatus(5000);
 
-  if (loading || !status) {
+  // Loading awal hanya jika belum ada data dan tidak sedang reconnecting/error
+  if (loading && !status && uiState !== "reconnecting" && uiState !== "error") {
     return (
       <Card className="bg-muted/20 border-border/30">
         <CardContent className="py-3 px-4">
@@ -37,23 +40,23 @@ export function ScannerStatusBar() {
     );
   }
 
-  const isRunning = status.running && status.connected;
-  const stats = status.stats;
+  const stats = status?.stats;
+
+  const cardStyle =
+    uiState === "connected"
+      ? "border-profit/20 bg-profit/5"
+      : uiState === "error"
+      ? "border-loss/20 bg-loss/5"
+      : "border-warning/20 bg-warning/5";
 
   return (
-    <Card
-      className={`border transition-all ${
-        isRunning
-          ? "border-profit/20 bg-profit/5"
-          : "border-warning/20 bg-warning/5"
-      }`}
-    >
+    <Card className={`border transition-all ${cardStyle}`}>
       <CardContent className="py-3 px-4">
         <div className="flex items-center justify-between flex-wrap gap-3">
           {/* Connection Status */}
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
-              {isRunning ? (
+              {uiState === "connected" && (
                 <>
                   <div className="relative">
                     <div className="h-2.5 w-2.5 rounded-full bg-profit" />
@@ -64,18 +67,41 @@ export function ScannerStatusBar() {
                     Scanner Active
                   </span>
                 </>
-              ) : (
+              )}
+
+              {uiState === "reconnecting" && (
+                <>
+                  <div className="h-2.5 w-2.5 rounded-full bg-warning animate-pulse" />
+                  <RefreshCw className="h-4 w-4 text-warning animate-spin" />
+                  <span className="text-sm font-medium text-warning">
+                    Reconnecting
+                    {reconnectAttempts > 0 ? ` (attempt #${reconnectAttempts})` : "..."}
+                  </span>
+                </>
+              )}
+
+              {uiState === "error" && (
+                <>
+                  <div className="h-2.5 w-2.5 rounded-full bg-loss" />
+                  <AlertCircle className="h-4 w-4 text-loss" />
+                  <span className="text-sm font-medium text-loss">
+                    {error || "Scanner Error"}
+                  </span>
+                </>
+              )}
+
+              {uiState === "stopped" && (
                 <>
                   <div className="h-2.5 w-2.5 rounded-full bg-warning" />
                   <WifiOff className="h-4 w-4 text-warning" />
                   <span className="text-sm font-medium text-warning">
-                    {status.message || "Scanner Offline"}
+                    {status?.message || "Scanner Offline"}
                   </span>
                 </>
               )}
             </div>
 
-            {status.strategies != null && status.strategies > 0 && (
+            {status?.strategies != null && status.strategies > 0 && (
               <Badge variant="outline" className="text-xs bg-muted/30">
                 <Zap className="h-3 w-3 mr-1" />
                 {status.strategies} strategies
@@ -83,7 +109,7 @@ export function ScannerStatusBar() {
             )}
           </div>
 
-          {/* Stats */}
+          {/* Stats (tetap tampil saat reconnecting agar tidak hilang dari layar) */}
           {stats && (
             <div className="flex items-center gap-4 text-xs text-muted-foreground">
               <span className="flex items-center gap-1">

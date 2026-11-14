@@ -8,10 +8,14 @@ Design decisions:
     - Numpy-based indicator math for speed
     - Thread-safe via asyncio (single event loop)
     - Indicators computed on-demand, not stored
+    - Gap detection: buffers can tell when an incoming candle is not contiguous
+      with the last stored one, so the engine can re-backfill from REST.
 """
 
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 import numpy as np
 
@@ -21,6 +25,24 @@ from app.scanner.binance_ws import Candle
 logger = get_logger(__name__)
 
 DEFAULT_BUFFER_SIZE = 200
+
+_TF_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+
+def timeframe_to_timedelta(timeframe: str) -> timedelta | None:
+    """Convert a Binance interval string ("1h", "4h", "1d") to a timedelta.
+
+    Returns None for intervals with variable length (e.g. "1M") or unparsable input.
+    """
+    try:
+        unit = timeframe[-1]
+        value = int(timeframe[:-1])
+    except (ValueError, IndexError):
+        return None
+    seconds = _TF_UNIT_SECONDS.get(unit)
+    if seconds is None or value <= 0:
+        return None
+    return timedelta(seconds=seconds * value)
 
 
 @dataclass
@@ -34,6 +56,7 @@ class IndicatorResult:
     atr: float | None = None
     volume_sma: float | None = None
     volume_ratio: float | None = None
+    current_open: float | None = None
     current_close: float | None = None
     current_high: float | None = None
     current_low: float | None = None
@@ -172,20 +195,52 @@ class CandleBuffer:
     def add_candle(self, candle: Candle) -> None:
         """Add a closed candle to the buffer.
 
-        If the candle's close_time matches the last candle, it updates in-place
-        (handles partial → closed candle transition).
+        - Open (partial) candles are ignored.
+        - A candle with the same open_time as the last one replaces it.
+        - A stale candle (older than the last one) is ignored, which keeps the
+          buffer strictly ordered even if messages are replayed.
         """
         if not candle.is_closed:
             return
 
-        # Deduplicate: if last candle has same open_time, replace it
-        if self._candles and self._candles[-1].open_time == candle.open_time:
-            self._candles[-1] = candle
-        else:
-            self._candles.append(candle)
+        if self._candles:
+            last_open = self._candles[-1].open_time
+            if candle.open_time == last_open:
+                self._candles[-1] = candle
+                return
+            if candle.open_time < last_open:
+                return
 
-    def _to_arrays(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Extract OHLCV arrays from candle buffer."""
+        self._candles.append(candle)
+
+    def replace(self, candles: Iterable[Candle]) -> None:
+        """Replace the whole buffer contents (used for backfill / gap repair).
+
+        Candles must be closed and sorted oldest first.
+        """
+        self._candles.clear()
+        for candle in candles:
+            if candle.is_closed:
+                self._candles.append(candle)
+
+    def has_gap(self, candle: Candle) -> bool:
+        """True if `candle` is not contiguous with the last stored candle.
+
+        A gap means at least one candle was missed (e.g. WS reconnect), so
+        indicators computed over the buffer would be wrong.
+        """
+        if not self._candles:
+            return False
+        interval = timeframe_to_timedelta(self.timeframe)
+        if interval is None:
+            return False
+        last = self._candles[-1]
+        if candle.open_time <= last.open_time:
+            return False
+        return (candle.open_time - last.open_time) > interval
+
+    def to_arrays(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Extract OHLCV arrays (opens, highs, lows, closes, volumes)."""
         if not self._candles:
             empty = np.array([], dtype=float)
             return empty, empty, empty, empty, empty
@@ -196,6 +251,10 @@ class CandleBuffer:
         closes = np.array([c.close for c in self._candles], dtype=float)
         volumes = np.array([c.volume for c in self._candles], dtype=float)
         return opens, highs, lows, closes, volumes
+
+    def _to_arrays(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Backwards-compatible alias for strategies that still call the private name."""
+        return self.to_arrays()
 
     def compute_indicators(
         self,
@@ -214,9 +273,10 @@ class CandleBuffer:
         if self.size < 2:
             return IndicatorResult()
 
-        _, highs, lows, closes, volumes = self._to_arrays()
+        opens, highs, lows, closes, volumes = self.to_arrays()
 
         result = IndicatorResult(
+            current_open=float(opens[-1]),
             current_close=float(closes[-1]),
             current_high=float(highs[-1]),
             current_low=float(lows[-1]),
@@ -258,12 +318,15 @@ class CandleBuffer:
         if not np.isnan(atr_arr[-1]):
             result.atr = float(atr_arr[-1])
 
-        # Volume analysis
-        vol_sma_arr = _sma(volumes, volume_ma_period)
-        if not np.isnan(vol_sma_arr[-1]):
-            result.volume_sma = float(vol_sma_arr[-1])
-            if result.volume_sma > 0:
-                result.volume_ratio = float(volumes[-1] / result.volume_sma)
+        # Volume analysis.
+        # The SMA is taken over the *previous* candles only; including the
+        # current candle in its own average deflates the ratio.
+        if len(volumes) > volume_ma_period:
+            vol_sma_arr = _sma(volumes[:-1], volume_ma_period)
+            if not np.isnan(vol_sma_arr[-1]):
+                result.volume_sma = float(vol_sma_arr[-1])
+                if result.volume_sma > 0:
+                    result.volume_ratio = float(volumes[-1] / result.volume_sma)
 
         return result
 
@@ -309,6 +372,14 @@ class CandleBufferManager:
         buf = self.get_buffer(candle.symbol, candle.timeframe)
         buf.add_candle(candle)
         return buf
+
+    def remove_symbol(self, symbol: str) -> int:
+        """Drop every buffer belonging to `symbol`. Returns how many were removed."""
+        prefix = f"{symbol.upper()}:"
+        keys = [k for k in self._buffers if k.startswith(prefix)]
+        for key in keys:
+            del self._buffers[key]
+        return len(keys)
 
     @property
     def buffer_count(self) -> int:

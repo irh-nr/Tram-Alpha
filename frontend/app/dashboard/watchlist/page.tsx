@@ -5,7 +5,7 @@ import { WatchlistPanel } from "@/components/watchlist/watchlist-panel";
 
 export default function WatchlistPage() {
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 hidden">
       {/* Page Header */}
       <div>
         <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">

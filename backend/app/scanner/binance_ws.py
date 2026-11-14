@@ -24,15 +24,17 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-BINANCE_WS_BASE = "wss://stream.binance.com:9443"
+BINANCE_WS_BASE = "wss://data-stream.binance.vision"
 BINANCE_WS_COMBINED = f"{BINANCE_WS_BASE}/stream"
-BINANCE_REST_BASE = "https://api.binance.com/api/v3"
+BINANCE_REST_BASE = "https://data-api.binance.vision/api/v3"
 
 # Reconnection parameters
 INITIAL_BACKOFF_S = 1.0
-MAX_BACKOFF_S = 60.0
+MAX_BACKOFF_S = 15.0
 BACKOFF_MULTIPLIER = 2.0
 
+# Khusus exception akibat WiFi / koneksi internet terputus sementara
+TRANSIENT_NETWORK_ERRORS = (OSError, TimeoutError)
 
 async def fetch_historical_klines(
     symbol: str,
@@ -52,15 +54,19 @@ async def fetch_historical_klines(
         List of Candle objects, oldest first.
     """
     import httpx
+    from app.core.config import get_settings
 
-    url = f"{BINANCE_REST_BASE}/klines"
+    settings = get_settings()
+    base_url = (settings.binance_rest_base_url or BINANCE_REST_BASE).rstrip("/")
+    url = f"{base_url}/klines"
     params = {
         "symbol": symbol.upper(),
         "interval": interval,
         "limit": min(limit, 1000),
     }
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    proxy = settings.binance_proxy_url or None
+    async with httpx.AsyncClient(timeout=15.0, proxy=proxy) as client:
         resp = await client.get(url, params=params)
         resp.raise_for_status()
         raw_klines = resp.json()
@@ -154,6 +160,24 @@ class BinanceWSClient:
     _ws: Any = field(default=None, init=False, repr=False)
     _running: bool = field(default=False, init=False, repr=False)
     _reconnect_count: int = field(default=0, init=False, repr=False)
+    # True while the link is down and we are retrying. This is a *status*, not
+    # an error: it is exposed via `state` so the UI can show "Reconnecting…"
+    # without touching the error counters.
+    _reconnecting: bool = field(default=False, init=False, repr=False)
+
+    @property
+    def state(self) -> str:
+        """Connection state: "connected", "reconnecting", "connecting" or "stopped"."""
+        if not self._running:
+            return "stopped"
+        if self.is_connected:
+            return "connected"
+        return "reconnecting" if self._reconnecting else "connecting"
+
+    @property
+    def reconnect_attempts(self) -> int:
+        """Consecutive failed attempts since the last successful connection."""
+        return self._reconnect_count
 
     def _build_stream_names(self) -> list[str]:
         """Build Binance combined stream names: symbol@kline_timeframe."""
@@ -166,12 +190,24 @@ class BinanceWSClient:
 
     def _build_ws_url(self) -> str:
         """Build the combined stream WebSocket URL."""
+        from app.core.config import get_settings
+
+        settings = get_settings()
         streams = self._build_stream_names()
         stream_param = "/".join(streams)
-        return f"{BINANCE_WS_COMBINED}?streams={stream_param}"
+
+        base_url = (settings.binance_ws_base_url or BINANCE_WS_COMBINED).rstrip("/")
+        if base_url.endswith("/stream"):
+            return f"{base_url}?streams={stream_param}"
+        return f"{base_url}/stream?streams={stream_param}"
 
     async def start(self) -> None:
         """Start the WebSocket connection with auto-reconnect."""
+        from app.core.config import get_settings
+
+        settings = get_settings()
+        proxy = settings.binance_proxy_url or None
+
         self._running = True
         backoff = INITIAL_BACKOFF_S
 
@@ -183,6 +219,7 @@ class BinanceWSClient:
             timeframes=self.timeframes,
             stream_count=stream_count,
             url=url[:80] + "...",
+            proxy=bool(proxy),
         )
 
         while self._running:
@@ -193,9 +230,11 @@ class BinanceWSClient:
                     ping_timeout=10,
                     close_timeout=5,
                     max_size=2**20,  # 1MB max message size
+                    proxy=proxy,
                 ) as ws:
                     self._ws = ws
                     self._reconnect_count = 0
+                    self._reconnecting = False
                     backoff = INITIAL_BACKOFF_S
 
                     logger.info(
@@ -214,7 +253,22 @@ class BinanceWSClient:
                     reason=str(e.reason)[:100],
                 )
 
+            except TRANSIENT_NETWORK_ERRORS as e:
+                # WiFi / internet dropped (DNS failure, connection refused or
+                # reset, timeout...). Expected and self-healing: log it and
+                # retry, but do NOT report it through on_error, otherwise it
+                # inflates the error counter shown in the frontend.
+                if not self._running:
+                    break
+                logger.warning(
+                    "binance_ws_network_unavailable",
+                    error_type=type(e).__name__,
+                    error=str(e)[:100],
+                )
+
             except Exception as e:
+                # Anything else (bad URL, HTTP 4xx/5xx handshake rejection,
+                # protocol errors, bugs in the callback...) is a real error.
                 if not self._running:
                     break
                 logger.error("binance_ws_error", error=str(e))
@@ -222,6 +276,7 @@ class BinanceWSClient:
                     await self.on_error(e)
 
             if self._running:
+                self._reconnecting = True
                 self._reconnect_count += 1
                 logger.info(
                     "binance_ws_reconnecting",
