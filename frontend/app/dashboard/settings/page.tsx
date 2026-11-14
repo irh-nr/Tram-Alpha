@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -84,7 +84,7 @@ export default function SettingsPage() {
   const [cleanupResult, setCleanupResult] = useState<string | null>(null);
 
   // Extract alerts by event type
-  const alerts = data?.alerts ?? [];
+  const alerts = useMemo(() => data?.alerts ?? [], [data?.alerts]);
 
   const getAlert = useCallback(
     (eventType: string): Alert | undefined =>

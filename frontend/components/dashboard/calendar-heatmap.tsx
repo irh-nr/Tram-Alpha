@@ -41,7 +41,7 @@ function getWeeksInYear(year: number): Date[][] {
   const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
   const firstMonday = new Date(year, 0, 1 + mondayOffset);
 
-  let current = new Date(firstMonday);
+  const current = new Date(firstMonday);
   let currentWeek: Date[] = [];
 
   while (current.getFullYear() <= year) {

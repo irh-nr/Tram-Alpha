@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   TrendingUp,
   TrendingDown,
@@ -45,6 +45,13 @@ export default function DashboardPage() {
   } = useDashboardStats(trades, liveSignals, journalEntries);
 
   const { formatAmount, formatPrice, symbol: currencySymbol } = useCurrency();
+
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60000);
+    return () => clearInterval(timer);
+  }, []);
 
   const isLoading = tradesLoading || signalsLoading;
 
@@ -99,7 +106,7 @@ export default function DashboardPage() {
         accentClass: "from-primary/40",
       },
     ],
-    [metrics, activeSignals, isConnected]
+    [metrics, activeSignals, isConnected, formatAmount]
   );
 
   // ── Loading skeleton ─────────────────────────────────────
@@ -255,7 +262,7 @@ export default function DashboardPage() {
               </div>
             ) : (
               recentSignals.map((signal) => {
-                const timeDiff = Date.now() - new Date(signal.detected_at).getTime();
+                const timeDiff = now - new Date(signal.detected_at).getTime();
                 const minutes = Math.floor(timeDiff / 60000);
                 const timeAgo =
                   minutes < 60

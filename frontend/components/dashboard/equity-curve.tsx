@@ -64,6 +64,19 @@ export function EquityCurve({ data, height = 300 }: EquityCurveProps) {
   const gradientId = "equity-gradient";
   const lineColor = isPositive ? "#34d399" : "#f87171"; // emerald-400 / red-400
 
+  // Pad with an initial zero point and convert values for current currency
+  const chartData = useMemo(() => {
+    if (data.length === 0) return [];
+    return [
+      { date: "", timestamp: 0, equity: 0, pnl: 0, symbol: "Start", tradeId: "" },
+      ...data.map((d) => ({
+        ...d,
+        equity: convert(d.equity),
+        pnl: convert(d.pnl),
+      })),
+    ];
+  }, [data, convert]);
+
   if (data.length === 0) {
     return (
       <div
@@ -79,16 +92,6 @@ export function EquityCurve({ data, height = 300 }: EquityCurveProps) {
       </div>
     );
   }
-
-  // Pad with an initial zero point and convert values for current currency
-  const chartData = useMemo(() => [
-    { date: "", timestamp: 0, equity: 0, pnl: 0, symbol: "Start", tradeId: "" },
-    ...data.map((d) => ({
-      ...d,
-      equity: convert(d.equity),
-      pnl: convert(d.pnl),
-    })),
-  ], [data, convert]);
 
   return (
     <ResponsiveContainer width="100%" height={height}>
