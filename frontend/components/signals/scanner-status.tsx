@@ -24,7 +24,7 @@ function formatUptime(seconds: number): string {
 
 export function ScannerStatusBar() {
   const { status, loading, error, uiState, reconnectAttempts } =
-    useScannerStatus(5000);
+    useScannerStatus(30000);
 
   // Loading awal hanya jika belum ada data dan tidak sedang reconnecting/error
   if (loading && !status && uiState !== "reconnecting" && uiState !== "error") {
